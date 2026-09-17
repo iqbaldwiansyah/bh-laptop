@@ -1,32 +1,41 @@
 $ErrorActionPreference = "SilentlyContinue"
 
-# 1. Ambil data baterai dari sistem Windows (WMI)
-$staticData = Get-CimInstance -Namespace "root\wmi" -ClassName "BatteryStaticData"
-$fullData = Get-CimInstance -Namespace "root\wmi" -ClassName "BatteryFullChargedCapacity"
-$statusData = Get-CimInstance -Namespace "root\cimv2" -ClassName "Win32_Battery"
+# 1. Generate report powercfg ke format XML (Tidak butuh akses Admin)
+$xmlPath = Join-Path $env:TEMP "bat_report_temp.xml"
+powercfg /batteryreport /xml /output $xmlPath | Out-Null
 
-if (!$staticData -or !$fullData) {
-    Write-Host "Data baterai tidak ditemukan. Pastikan script ini dijalankan di laptop, bukan desktop." -ForegroundColor Red
+if (!(Test-Path $xmlPath)) {
+    Write-Host "Gagal membaca sensor baterai." -ForegroundColor Red
     return
 }
 
-$designCapacity = $staticData.DesignedCapacity
-$fullCapacity = $fullData.FullChargedCapacity
-$name = $statusData.Name
-if (!$name) { $name = "Generic Battery" }
+# 2. Parsing file XML
+[xml]$batXml = Get-Content $xmlPath
+$batteryInfo = $batXml.BatteryReport.Batteries.Battery[0]
 
-# 2. Kalkulasi Persentase Health
+if (!$batteryInfo) {
+    Write-Host "Data baterai tidak ditemukan di sistem ini." -ForegroundColor Red
+    return
+}
+
+$designCapacity = [int]$batteryInfo.DesignCapacity
+$fullCapacity = [int]$batteryInfo.FullChargeCapacity
+$cycleCount = $batteryInfo.CycleCount
+if (!$cycleCount) { $cycleCount = "Tidak Terbaca" }
+$name = $batteryInfo.Id
+if (!$name) { $name = "Baterai Laptop" }
+
+# 3. Kalkulasi Health
 $healthPercent = 0
 if ($designCapacity -gt 0) {
     $healthPercent = [math]::Round((($fullCapacity / $designCapacity) * 100), 1)
 }
 
-# Penentuan Warna Indikator
-$healthColor = "#22c55e" # Hijau (Sehat)
-if ($healthPercent -lt 80) { $healthColor = "#eab308" } # Kuning (Peringatan)
-if ($healthPercent -lt 60) { $healthColor = "#ef4444" } # Merah (Kritis)
+$healthColor = "#22c55e" # Hijau
+if ($healthPercent -lt 80) { $healthColor = "#eab308" } # Kuning
+if ($healthPercent -lt 60) { $healthColor = "#ef4444" } # Merah
 
-# 3. Generate HTML dengan Design Modern
+# 4. Merakit UI HTML (Termasuk Cycle Count)
 $html = @"
 <!DOCTYPE html>
 <html lang="en">
@@ -60,7 +69,7 @@ $html = @"
         <div class="health-circle">
             <div class="health-inner">
                 <span class="health-value">${healthPercent}%</span>
-                <span class="health-label">Capacity</span>
+                <span class="health-label">Health</span>
             </div>
         </div>
 
@@ -73,8 +82,12 @@ $html = @"
                 <div class="stat-label">Full Charge</div>
                 <div class="stat-value">${fullCapacity} mWh</div>
             </div>
-            <div class="stat-box" style="grid-column: span 2;">
-                <div class="stat-label">Battery Model / Name</div>
+            <div class="stat-box">
+                <div class="stat-label">Cycle Count</div>
+                <div class="stat-value">${cycleCount}</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-label">Battery ID</div>
                 <div class="stat-value">${name}</div>
             </div>
         </div>
@@ -87,8 +100,9 @@ $html = @"
 </html>
 "@
 
-# 4. Simpan ke file sementara dan eksekusi (buka di browser)
+# 5. Buka HTML & Bersihkan Temp
 $outPath = Join-Path $env:TEMP "BatteryHealth_Iqbal.html"
 $html | Out-File -FilePath $outPath -Encoding utf8
 Write-Host "Membuka Battery Health Report..." -ForegroundColor Cyan
 Invoke-Item $outPath
+Remove-Item $xmlPath -ErrorAction SilentlyContinue

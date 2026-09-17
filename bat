@@ -1,27 +1,32 @@
 $ErrorActionPreference = "SilentlyContinue"
 
-# 1. Generate report powercfg ke format XML (Tidak butuh akses Admin)
+# 1. Generate report powercfg ke format XML
 $xmlPath = Join-Path $env:TEMP "bat_report_temp.xml"
 powercfg /batteryreport /xml /output $xmlPath | Out-Null
 
+# Beri jeda 1 detik agar sistem selesai menulis file XML sebelum dibaca
+Start-Sleep -Seconds 1 
+
 if (!(Test-Path $xmlPath)) {
-    Write-Host "Gagal membaca sensor baterai." -ForegroundColor Red
+    Write-Host "Gagal membuat file XML laporan baterai." -ForegroundColor Red
     return
 }
 
-# 2. Parsing file XML
+# 2. Parsing file XML dengan aman
 [xml]$batXml = Get-Content $xmlPath
-$batteryInfo = $batXml.BatteryReport.Batteries.Battery[0]
 
-if (!$batteryInfo) {
-    Write-Host "Data baterai tidak ditemukan di sistem ini." -ForegroundColor Red
+# PERBAIKAN: Ambil data baterai dengan aman tanpa bergantung pada indeks array [0]
+$batteryInfo = $batXml.BatteryReport.Batteries.Battery | Select-Object -First 1
+
+if (!$batteryInfo -or !$batteryInfo.DesignCapacity) {
+    Write-Host "Data kapasitas baterai tidak ditemukan di sistem ini." -ForegroundColor Red
     return
 }
 
 $designCapacity = [int]$batteryInfo.DesignCapacity
 $fullCapacity = [int]$batteryInfo.FullChargeCapacity
 $cycleCount = $batteryInfo.CycleCount
-if (!$cycleCount) { $cycleCount = "Tidak Terbaca" }
+if (!$cycleCount) { $cycleCount = "N/A" }
 $name = $batteryInfo.Id
 if (!$name) { $name = "Baterai Laptop" }
 
@@ -35,7 +40,7 @@ $healthColor = "#22c55e" # Hijau
 if ($healthPercent -lt 80) { $healthColor = "#eab308" } # Kuning
 if ($healthPercent -lt 60) { $healthColor = "#ef4444" } # Merah
 
-# 4. Merakit UI HTML (Termasuk Cycle Count)
+# 4. Merakit UI HTML 
 $html = @"
 <!DOCTYPE html>
 <html lang="en">

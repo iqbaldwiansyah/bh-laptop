@@ -1,36 +1,39 @@
 $ErrorActionPreference = "SilentlyContinue"
 
-# 1. Generate report powercfg ke format XML
-$xmlPath = Join-Path $env:TEMP "bat_report_temp.xml"
-powercfg /batteryreport /xml /output $xmlPath | Out-Null
+# 1. Hapus file lama jika ada dan buat yang baru
+$xmlPath = Join-Path $env:TEMP "battery_iqbal.xml"
+if (Test-Path $xmlPath) { Remove-Item $xmlPath -Force }
 
-# Beri jeda 1 detik agar sistem selesai menulis file XML sebelum dibaca
-Start-Sleep -Seconds 1 
+powercfg /batteryreport /xml /output $xmlPath | Out-Null
+Start-Sleep -Seconds 2 # Beri jeda 2 detik agar file utuh
 
 if (!(Test-Path $xmlPath)) {
-    Write-Host "Gagal membuat file XML laporan baterai." -ForegroundColor Red
+    Write-Host "File XML gagal dibuat oleh Windows." -ForegroundColor Red
     return
 }
 
-# 2. Parsing file XML dengan aman
-[xml]$batXml = Get-Content $xmlPath
+# 2. Baca file secara Raw dan jadikan XML
+$xmlText = Get-Content $xmlPath -Raw
+[xml]$batXml = $xmlText
 
-# PERBAIKAN: Ambil data baterai dengan aman tanpa bergantung pada indeks array [0]
-$batteryInfo = $batXml.BatteryReport.Batteries.Battery | Select-Object -First 1
+# 3. PERBAIKAN: Gunakan XPath (SelectSingleNode)
+# Teknik ini mencari teks secara langsung ke seluruh file tanpa peduli lokasinya
+$designNode = $batXml.SelectSingleNode("//DesignCapacity")
+$fullNode = $batXml.SelectSingleNode("//FullChargeCapacity")
+$cycleNode = $batXml.SelectSingleNode("//CycleCount")
+$idNode = $batXml.SelectSingleNode("//Id")
 
-if (!$batteryInfo -or !$batteryInfo.DesignCapacity) {
-    Write-Host "Data kapasitas baterai tidak ditemukan di sistem ini." -ForegroundColor Red
+if (!$designNode -or !$fullNode) {
+    Write-Host "Tag Kapasitas tidak ditemukan di dalam XML." -ForegroundColor Red
     return
 }
 
-$designCapacity = [int]$batteryInfo.DesignCapacity
-$fullCapacity = [int]$batteryInfo.FullChargeCapacity
-$cycleCount = $batteryInfo.CycleCount
-if (!$cycleCount) { $cycleCount = "N/A" }
-$name = $batteryInfo.Id
-if (!$name) { $name = "Baterai Laptop" }
+$designCapacity = [int]$designNode.InnerText
+$fullCapacity = [int]$fullNode.InnerText
+$cycleCount = if ($cycleNode) { $cycleNode.InnerText } else { "N/A" }
+$name = if ($idNode) { $idNode.InnerText } else { "Baterai Laptop" }
 
-# 3. Kalkulasi Health
+# 4. Kalkulasi Health
 $healthPercent = 0
 if ($designCapacity -gt 0) {
     $healthPercent = [math]::Round((($fullCapacity / $designCapacity) * 100), 1)
@@ -40,7 +43,7 @@ $healthColor = "#22c55e" # Hijau
 if ($healthPercent -lt 80) { $healthColor = "#eab308" } # Kuning
 if ($healthPercent -lt 60) { $healthColor = "#ef4444" } # Merah
 
-# 4. Merakit UI HTML 
+# 5. Merakit UI HTML 
 $html = @"
 <!DOCTYPE html>
 <html lang="en">
@@ -105,7 +108,7 @@ $html = @"
 </html>
 "@
 
-# 5. Buka HTML & Bersihkan Temp
+# 6. Buka HTML & Bersihkan
 $outPath = Join-Path $env:TEMP "BatteryHealth_Iqbal.html"
 $html | Out-File -FilePath $outPath -Encoding utf8
 Write-Host "Membuka Battery Health Report..." -ForegroundColor Cyan

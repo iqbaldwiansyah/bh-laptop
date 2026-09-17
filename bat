@@ -5,39 +5,34 @@ $xmlPath = Join-Path $env:TEMP "battery_iqbal.xml"
 if (Test-Path $xmlPath) { Remove-Item $xmlPath -Force }
 
 powercfg /batteryreport /xml /output $xmlPath | Out-Null
-Start-Sleep -Seconds 2 # Beri jeda 2 detik agar file utuh
+Start-Sleep -Seconds 2
 
 if (!(Test-Path $xmlPath)) {
     Write-Host "File XML gagal dibuat oleh Windows." -ForegroundColor Red
     return
 }
 
-# 2. Baca file secara Raw dan jadikan XML
+# 2. BACA SEBAGAI TEKS BIASA (Bypass masalah XML Namespace)
 $xmlText = Get-Content $xmlPath -Raw
-[xml]$batXml = $xmlText
 
-# 3. PERBAIKAN: Gunakan XPath (SelectSingleNode)
-# Teknik ini mencari teks secara langsung ke seluruh file tanpa peduli lokasinya
-$designNode = $batXml.SelectSingleNode("//DesignCapacity")
-$fullNode = $batXml.SelectSingleNode("//FullChargeCapacity")
-$cycleNode = $batXml.SelectSingleNode("//CycleCount")
-$idNode = $batXml.SelectSingleNode("//Id")
+# 3. EKSTRAK DATA MENGGUNAKAN REGEX (Sangat akurat & kebal error)
+$designCapacity = 0
+$fullCapacity = 0
+$cycleCount = "N/A"
+$name = "Baterai Laptop"
 
-if (!$designNode -or !$fullNode) {
-    Write-Host "Tag Kapasitas tidak ditemukan di dalam XML." -ForegroundColor Red
+if ($xmlText -match "<DesignCapacity>(\d+)</DesignCapacity>") { $designCapacity = [int]$matches[1] }
+if ($xmlText -match "<FullChargeCapacity>(\d+)</FullChargeCapacity>") { $fullCapacity = [int]$matches[1] }
+if ($xmlText -match "<CycleCount>([^<]+)</CycleCount>") { $cycleCount = $matches[1] }
+if ($xmlText -match "<Id>([^<]+)</Id>") { $name = $matches[1] }
+
+if ($designCapacity -eq 0 -or $fullCapacity -eq 0) {
+    Write-Host "Data kapasitas tidak terdeteksi oleh sensor baterai Windows." -ForegroundColor Red
     return
 }
 
-$designCapacity = [int]$designNode.InnerText
-$fullCapacity = [int]$fullNode.InnerText
-$cycleCount = if ($cycleNode) { $cycleNode.InnerText } else { "N/A" }
-$name = if ($idNode) { $idNode.InnerText } else { "Baterai Laptop" }
-
 # 4. Kalkulasi Health
-$healthPercent = 0
-if ($designCapacity -gt 0) {
-    $healthPercent = [math]::Round((($fullCapacity / $designCapacity) * 100), 1)
-}
+$healthPercent = [math]::Round((($fullCapacity / $designCapacity) * 100), 1)
 
 $healthColor = "#22c55e" # Hijau
 if ($healthPercent -lt 80) { $healthColor = "#eab308" } # Kuning
